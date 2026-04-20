@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image Upscaler</title>
+    <title>Image Upscaler - Increase Resolution to 700KB</title>
     <style>
         * {
             margin: 0;
@@ -172,11 +172,12 @@
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Image Upscaler</h1>
+        <h1>🚀 Image Upscaler to 700KB</h1>
+        <p style="text-align: center; color: #666; margin-bottom: 20px;">Increase image resolution and quality to reach 700KB file size</p>
 
         <div id="dropZone">
             <p>📁 Drop images here or click to select</p>
-            <small>Supported: JPG, PNG, WebP</small>
+            <small>Supported: JPG, PNG, WebP - Will upscale to 700KB</small>
         </div>
         <input type="file" id="fileInput" multiple accept="image/*">
 
@@ -192,7 +193,7 @@
         </div>
 
         <div class="button-group">
-            <button id="processBtn" disabled>⚙️ Process All</button>
+            <button id="processBtn" disabled>⚙️ Upscale All</button>
             <button id="downloadAllBtn" disabled>💾 Download All</button>
             <button id="clearBtn" disabled>🗑️ Clear</button>
         </div>
@@ -256,7 +257,8 @@
                     <div class="image-info">
                         <div class="image-name"><strong>${file.name}</strong></div>
                         <div style="margin: 5px 0;">Original: ${formatBytes(file.size)}</div>
-                        <div>Compressed: <span id="new-size-${id}">-</span></div>
+                        <div>Upscaled: <span id="new-size-${id}">-</span></div>
+                        <div>Resolution: <span id="resolution-${id}">-</span></div>
                         <div class="progress-bar">
                             <div class="progress-fill" id="progress-${id}"></div>
                         </div>
@@ -287,6 +289,7 @@
             const statusEl = document.getElementById(`status-${imageData.id}`);
             const progressEl = document.getElementById(`progress-${imageData.id}`);
             const newSizeEl = document.getElementById(`new-size-${imageData.id}`);
+            const resolutionEl = document.getElementById(`resolution-${imageData.id}`);
             const downloadBtn = document.getElementById(`download-${imageData.id}`);
 
             statusEl.textContent = 'Processing...';
@@ -297,18 +300,19 @@
                 const img = await loadImage(imageData.file);
                 progressEl.style.width = '60%';
 
-                const blob = await compressToTarget(img, 700);
+                const result = await upscaleToTarget(img, 700);
 
-                if (!blob) throw new Error("Compression failed");
+                if (!result) throw new Error("Upscaling failed");
 
-                imageData.processedBlob = blob;
+                imageData.processedBlob = result.blob;
                 imageData.status = 'complete';
                 processed++;
 
                 progressEl.style.width = '100%';
                 statusEl.textContent = '✓ Complete';
                 statusEl.style.color = '#4caf50';
-                newSizeEl.textContent = formatBytes(blob.size);
+                newSizeEl.textContent = formatBytes(result.blob.size);
+                resolutionEl.textContent = `${result.width}×${result.height}`;
                 downloadBtn.style.display = 'block';
 
             } catch (e) {
@@ -318,6 +322,94 @@
             }
 
             updateStats();
+        }
+
+        async function upscaleToTarget(img, targetKB) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            let currentWidth = img.width;
+            let currentHeight = img.height;
+            let quality = 0.8;
+            let bestResult = null;
+
+            // First, try with original dimensions
+            canvas.width = currentWidth;
+            canvas.height = currentHeight;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, currentWidth, currentHeight);
+
+            const originalBlob = await new Promise(res =>
+                canvas.toBlob(res, 'image/jpeg', quality)
+            );
+
+            if (originalBlob.size / 1024 >= targetKB) {
+                // If original is already >= 700KB, use quality compression
+                bestResult = await compressToTarget(img, targetKB);
+            } else {
+                // Upscale: Increase resolution while maintaining quality
+                let upscaleIterations = 0;
+                let lastBlob = originalBlob;
+
+                while (lastBlob.size / 1024 < targetKB && upscaleIterations < 8) {
+                    upscaleIterations++;
+
+                    // Increase resolution by 20%
+                    currentWidth = Math.floor(currentWidth * 1.2);
+                    currentHeight = Math.floor(currentHeight * 1.2);
+
+                    canvas.width = currentWidth;
+                    canvas.height = currentHeight;
+                    ctx.imageSmoothingQuality = 'high';
+                    ctx.drawImage(img, 0, 0, currentWidth, currentHeight);
+
+                    lastBlob = await new Promise(res =>
+                        canvas.toBlob(res, 'image/jpeg', quality)
+                    );
+
+                    const currentSizeKB = lastBlob.size / 1024;
+
+                    // If we've reached or exceeded target, fine-tune quality
+                    if (currentSizeKB >= targetKB) {
+                        if (Math.abs(currentSizeKB - targetKB) < 50) {
+                            bestResult = { blob: lastBlob, width: currentWidth, height: currentHeight };
+                            break;
+                        } else {
+                            // Fine-tune with quality adjustment
+                            let minQ = 0.4;
+                            let maxQ = quality;
+
+                            for (let i = 0; i < 5; i++) {
+                                let q = (minQ + maxQ) / 2;
+                                const tuneBlob = await new Promise(res =>
+                                    canvas.toBlob(res, 'image/jpeg', q)
+                                );
+
+                                const tuneSizeKB = tuneBlob.size / 1024;
+
+                                if (Math.abs(tuneSizeKB - targetKB) < 20) {
+                                    bestResult = { blob: tuneBlob, width: currentWidth, height: currentHeight };
+                                    break;
+                                }
+
+                                if (tuneSizeKB > targetKB) {
+                                    maxQ = q;
+                                } else {
+                                    minQ = q;
+                                    bestResult = { blob: tuneBlob, width: currentWidth, height: currentHeight };
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                if (!bestResult) {
+                    bestResult = { blob: lastBlob, width: currentWidth, height: currentHeight };
+                }
+            }
+
+            return bestResult;
         }
 
         async function compressToTarget(img, targetKB) {
@@ -346,7 +438,7 @@
                 let sizeKB = blob.size / 1024;
 
                 if (Math.abs(sizeKB - targetKB) < 20) {
-                    return blob;
+                    return { blob, width: img.width, height: img.height };
                 }
 
                 if (sizeKB > targetKB) {
@@ -357,7 +449,7 @@
                 }
             }
 
-            return bestBlob;
+            return bestBlob ? { blob: bestBlob, width: img.width, height: img.height } : null;
         }
 
         function loadImage(file) {
@@ -380,7 +472,7 @@
             const url = URL.createObjectURL(img.processedBlob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = img.file.name.replace(/\.[^/.]+$/, '') + '_700KB.jpg';
+            a.download = img.file.name.replace(/\.[^/.]+$/, '') + '_upscaled_700KB.jpg';
             a.click();
             URL.revokeObjectURL(url);
         }
