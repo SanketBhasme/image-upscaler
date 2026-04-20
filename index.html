@@ -1,238 +1,306 @@
-<html>
-const dropZone = document.getElementById('dropZone');
-const fileInput = document.getElementById('fileInput');
-const imageList = document.getElementById('imageList');
-const processBtn = document.getElementById('processBtn');
-const downloadAllBtn = document.getElementById('downloadAllBtn');
-const clearBtn = document.getElementById('clearBtn');
-const processedCount = document.getElementById('processedCount');
-const queueCount = document.getElementById('queueCount');
-
-let images = [];
-let processed = 0;
-
-// ================= FILE HANDLING =================
-dropZone.addEventListener('dragover', e => {
-    e.preventDefault();
-    dropZone.classList.add('dragover');
-});
-
-dropZone.addEventListener('dragleave', () => {
-    dropZone.classList.remove('dragover');
-});
-
-dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('dragover');
-    handleFiles(e.dataTransfer.files);
-});
-
-fileInput.addEventListener('change', e => handleFiles(e.target.files));
-
-function handleFiles(files) {
-    for (let file of files) {
-        if (file.type.startsWith('image/')) {
-            const id = Date.now() + Math.random();
-            images.push({ id, file, status: 'pending', processedBlob: null });
-            addImageCard(id, file);
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Upscaler</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-    }
-    updateStats();
-    updateButtons();
-}
 
-// ================= IMAGE CARD =================
-function addImageCard(id, file) {
-    const card = document.createElement('div');
-    card.className = 'image-card';
-    card.id = `card-${id}`;
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
 
-    const reader = new FileReader();
-    reader.onload = e => {
-        card.innerHTML = `
-            <button class="remove-btn" onclick="removeImage(${id})">×</button>
-            <img src="${e.target.result}" class="image-preview">
-            <div class="image-info">
-                <div class="image-name">${file.name}</div>
-                <div class="image-details">
-                    <span>${formatBytes(file.size)}</span>
-                    <span id="new-size-${id}">-</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="progress-fill" id="progress-${id}"></div>
-                </div>
-                <div class="status" id="status-${id}">Ready</div>
-                <button class="download-btn" id="download-${id}" style="display:none" onclick="downloadImage(${id})">
-                    Download
-                </button>
+        .container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 40px;
+            width: 100%;
+            max-width: 800px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+
+        #dropZone {
+            border: 3px dashed #667eea;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #f8f9ff;
+            margin-bottom: 20px;
+        }
+
+        #dropZone:hover,
+        #dropZone.dragover {
+            border-color: #764ba2;
+            background: #f0f2ff;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        #dropZone p {
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        button {
+            flex: 1;
+            min-width: 150px;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        #processBtn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        #processBtn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        #downloadAllBtn,
+        #clearBtn {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        #downloadAllBtn:hover:not(:disabled),
+        #clearBtn:hover:not(:disabled) {
+            background: #e0e0e0;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9ff;
+            border-radius: 8px;
+        }
+
+        .stat-item {
+            flex: 1;
+            text-align: center;
+        }
+
+        .stat-item .number {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-item .label {
+            font-size: 12px;
+            color: #999;
+            margin-top: 5px;
+        }
+
+        #imageList {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .image-card {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .image-card:hover {
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            border-color: #667eea;
+        }
+
+        .remove-btn {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: rgba(255, 0, 0, 0.8);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+        }
+
+        .image-preview {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+
+        .image-info {
+            padding: 15px;
+        }
+
+        .image-name {
+            font-weight: 600;
+            color: #333;
+            font-size: 13px;
+            margin-bottom: 8px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .image-details {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 10px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #e0e0e0;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .status {
+            font-size: 12px;
+            font-weight: 600;
+            color: #999;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        .status.processing {
+            color: #ff9800;
+        }
+
+        .status.complete {
+            color: #4caf50;
+        }
+
+        .download-btn {
+            width: 100%;
+            padding: 8px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .download-btn:hover {
+            transform: scale(1.05);
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+
+            #imageList {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            button {
+                min-width: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Image Upscaler</h1>
+
+        <div id="dropZone">
+            <p>📁 Drop images here or click to select</p>
+            <small>Supported: JPG, PNG, WebP</small>
+        </div>
+        <input type="file" id="fileInput" multiple accept="image/*">
+
+        <div class="stats">
+            <div class="stat-item">
+                <div class="number" id="processedCount">0</div>
+                <div class="label">Processed</div>
             </div>
-        `;
-    };
-    reader.readAsDataURL(file);
-    imageList.appendChild(card);
-}
+            <div class="stat-item">
+                <div class="number" id="queueCount">0</div>
+                <div class="label">Queued</div>
+            </div>
+        </div>
 
-// ================= PROCESS =================
-async function processAllImages() {
-    processBtn.disabled = true;
-    processed = 0;
+        <div class="button-group">
+            <button id="processBtn" disabled>⚙️ Process All</button>
+            <button id="downloadAllBtn" disabled>💾 Download All</button>
+            <button id="clearBtn" disabled>🗑️ Clear</button>
+        </div>
 
-    for (let img of images) {
-        if (img.status === 'pending') {
-            await processImage(img);
-        }
-    }
+        <div id="imageList"></div>
+    </div>
 
-    processBtn.disabled = false;
-    updateButtons();
-}
-
-async function processImage(imageData) {
-    const statusEl = document.getElementById(`status-${imageData.id}`);
-    const progressEl = document.getElementById(`progress-${imageData.id}`);
-    const newSizeEl = document.getElementById(`new-size-${imageData.id}`);
-    const downloadBtn = document.getElementById(`download-${imageData.id}`);
-
-    statusEl.textContent = 'Processing...';
-    statusEl.className = 'status processing';
-    progressEl.style.width = '30%';
-
-    try {
-        const img = await loadImage(imageData.file);
-        progressEl.style.width = '60%';
-
-        const blob = await compressToTarget(img, 700);
-
-        if (!blob) throw new Error("Compression failed");
-
-        imageData.processedBlob = blob;
-        imageData.status = 'complete';
-        processed++;
-
-        progressEl.style.width = '100%';
-        statusEl.textContent = '✓ Complete';
-        statusEl.className = 'status complete';
-        newSizeEl.textContent = formatBytes(blob.size);
-        downloadBtn.style.display = 'block';
-
-    } catch (e) {
-        console.error(e);
-        statusEl.textContent = '✗ Error';
-    }
-
-    updateStats();
-}
-
-// ================= CORE ENGINE (UPGRADED) =================
-async function compressToTarget(img, targetKB) {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-
-    let width = img.width;
-    let height = img.height;
-
-    canvas.width = width;
-    canvas.height = height;
-
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, 0, 0, width, height);
-
-    let minQ = 0.4;
-    let maxQ = 0.95;
-    let bestBlob = null;
-
-    for (let i = 0; i < 10; i++) {
-        let q = (minQ + maxQ) / 2;
-
-        const blob = await new Promise(res =>
-            canvas.toBlob(res, 'image/jpeg', q)
-        );
-
-        if (!blob) continue;
-
-        let sizeKB = blob.size / 1024;
-
-        if (Math.abs(sizeKB - targetKB) < 20) {
-            return blob;
-        }
-
-        if (sizeKB > targetKB) {
-            maxQ = q;
-        } else {
-            minQ = q;
-            bestBlob = blob;
-        }
-    }
-
-    return bestBlob;
-}
-
-// ================= HELPERS =================
-function loadImage(file) {
-    return new Promise((res, rej) => {
-        const img = new Image();
-        const url = URL.createObjectURL(file);
-        img.onload = () => {
-            URL.revokeObjectURL(url);
-            res(img);
-        };
-        img.onerror = rej;
-        img.src = url;
-    });
-}
-
-function downloadImage(id) {
-    const img = images.find(i => i.id === id);
-    if (!img?.processedBlob) return;
-
-    const url = URL.createObjectURL(img.processedBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = img.file.name.replace(/\.[^/.]+$/, '') + '_700KB.jpg';
-    a.click();
-    URL.revokeObjectURL(url);
-}
-
-async function downloadAll() {
-    for (let img of images) {
-        if (img.processedBlob) {
-            downloadImage(img.id);
-            await new Promise(r => setTimeout(r, 100));
-        }
-    }
-}
-
-function removeImage(id) {
-    images = images.filter(i => i.id !== id);
-    document.getElementById(`card-${id}`).remove();
-    updateStats();
-    updateButtons();
-}
-
-function clearAll() {
-    images = [];
-    imageList.innerHTML = '';
-    processed = 0;
-    updateStats();
-    updateButtons();
-}
-
-function updateStats() {
-    processedCount.textContent = processed;
-    queueCount.textContent = images.length - processed;
-}
-
-function updateButtons() {
-    processBtn.disabled = images.filter(i => i.status === 'pending').length === 0;
-    downloadAllBtn.disabled = images.filter(i => i.status === 'complete').length === 0;
-    clearBtn.disabled = images.length === 0;
-}
-
-function formatBytes(bytes) {
-    return (bytes / 1024).toFixed(1) + ' KB';
-}
-
-processBtn.onclick = processAllImages;
-downloadAllBtn.onclick = downloadAll;
-clearBtn.onclick = clearAll;
-<html>
+    <script>
+        // [Your JavaScript code here - paste all the JS from your current file]
+    </script>
+</body>
+</html>
