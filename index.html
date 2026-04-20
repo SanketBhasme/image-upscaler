@@ -1,0 +1,238 @@
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const imageList = document.getElementById('imageList');
+const processBtn = document.getElementById('processBtn');
+const downloadAllBtn = document.getElementById('downloadAllBtn');
+const clearBtn = document.getElementById('clearBtn');
+const processedCount = document.getElementById('processedCount');
+const queueCount = document.getElementById('queueCount');
+
+let images = [];
+let processed = 0;
+
+// ================= FILE HANDLING =================
+dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+});
+
+dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('dragover');
+});
+
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    handleFiles(e.dataTransfer.files);
+});
+
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+function handleFiles(files) {
+    for (let file of files) {
+        if (file.type.startsWith('image/')) {
+            const id = Date.now() + Math.random();
+            images.push({ id, file, status: 'pending', processedBlob: null });
+            addImageCard(id, file);
+        }
+    }
+    updateStats();
+    updateButtons();
+}
+
+// ================= IMAGE CARD =================
+function addImageCard(id, file) {
+    const card = document.createElement('div');
+    card.className = 'image-card';
+    card.id = `card-${id}`;
+
+    const reader = new FileReader();
+    reader.onload = e => {
+        card.innerHTML = `
+            <button class="remove-btn" onclick="removeImage(${id})">×</button>
+            <img src="${e.target.result}" class="image-preview">
+            <div class="image-info">
+                <div class="image-name">${file.name}</div>
+                <div class="image-details">
+                    <span>${formatBytes(file.size)}</span>
+                    <span id="new-size-${id}">-</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-${id}"></div>
+                </div>
+                <div class="status" id="status-${id}">Ready</div>
+                <button class="download-btn" id="download-${id}" style="display:none" onclick="downloadImage(${id})">
+                    Download
+                </button>
+            </div>
+        `;
+    };
+    reader.readAsDataURL(file);
+    imageList.appendChild(card);
+}
+
+// ================= PROCESS =================
+async function processAllImages() {
+    processBtn.disabled = true;
+    processed = 0;
+
+    for (let img of images) {
+        if (img.status === 'pending') {
+            await processImage(img);
+        }
+    }
+
+    processBtn.disabled = false;
+    updateButtons();
+}
+
+async function processImage(imageData) {
+    const statusEl = document.getElementById(`status-${imageData.id}`);
+    const progressEl = document.getElementById(`progress-${imageData.id}`);
+    const newSizeEl = document.getElementById(`new-size-${imageData.id}`);
+    const downloadBtn = document.getElementById(`download-${imageData.id}`);
+
+    statusEl.textContent = 'Processing...';
+    statusEl.className = 'status processing';
+    progressEl.style.width = '30%';
+
+    try {
+        const img = await loadImage(imageData.file);
+        progressEl.style.width = '60%';
+
+        const blob = await compressToTarget(img, 700);
+
+        if (!blob) throw new Error("Compression failed");
+
+        imageData.processedBlob = blob;
+        imageData.status = 'complete';
+        processed++;
+
+        progressEl.style.width = '100%';
+        statusEl.textContent = '✓ Complete';
+        statusEl.className = 'status complete';
+        newSizeEl.textContent = formatBytes(blob.size);
+        downloadBtn.style.display = 'block';
+
+    } catch (e) {
+        console.error(e);
+        statusEl.textContent = '✗ Error';
+    }
+
+    updateStats();
+}
+
+// ================= CORE ENGINE (UPGRADED) =================
+async function compressToTarget(img, targetKB) {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width = img.width;
+    let height = img.height;
+
+    canvas.width = width;
+    canvas.height = height;
+
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, 0, width, height);
+
+    let minQ = 0.4;
+    let maxQ = 0.95;
+    let bestBlob = null;
+
+    for (let i = 0; i < 10; i++) {
+        let q = (minQ + maxQ) / 2;
+
+        const blob = await new Promise(res =>
+            canvas.toBlob(res, 'image/jpeg', q)
+        );
+
+        if (!blob) continue;
+
+        let sizeKB = blob.size / 1024;
+
+        if (Math.abs(sizeKB - targetKB) < 20) {
+            return blob;
+        }
+
+        if (sizeKB > targetKB) {
+            maxQ = q;
+        } else {
+            minQ = q;
+            bestBlob = blob;
+        }
+    }
+
+    return bestBlob;
+}
+
+// ================= HELPERS =================
+function loadImage(file) {
+    return new Promise((res, rej) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            res(img);
+        };
+        img.onerror = rej;
+        img.src = url;
+    });
+}
+
+function downloadImage(id) {
+    const img = images.find(i => i.id === id);
+    if (!img?.processedBlob) return;
+
+    const url = URL.createObjectURL(img.processedBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = img.file.name.replace(/\.[^/.]+$/, '') + '_700KB.jpg';
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+async function downloadAll() {
+    for (let img of images) {
+        if (img.processedBlob) {
+            downloadImage(img.id);
+            await new Promise(r => setTimeout(r, 100));
+        }
+    }
+}
+
+function removeImage(id) {
+    images = images.filter(i => i.id !== id);
+    document.getElementById(`card-${id}`).remove();
+    updateStats();
+    updateButtons();
+}
+
+function clearAll() {
+    images = [];
+    imageList.innerHTML = '';
+    processed = 0;
+    updateStats();
+    updateButtons();
+}
+
+function updateStats() {
+    processedCount.textContent = processed;
+    queueCount.textContent = images.length - processed;
+}
+
+function updateButtons() {
+    processBtn.disabled = images.filter(i => i.status === 'pending').length === 0;
+    downloadAllBtn.disabled = images.filter(i => i.status === 'complete').length === 0;
+    clearBtn.disabled = images.length === 0;
+}
+
+function formatBytes(bytes) {
+    return (bytes / 1024).toFixed(1) + ' KB';
+}
+
+processBtn.onclick = processAllImages;
+downloadAllBtn.onclick = downloadAll;
+clearBtn.onclick = clearAll;
+</script>
